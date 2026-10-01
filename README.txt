@@ -10,7 +10,7 @@ INSTALL ON UBUNTU
   Clicking the app icon again while it's running doesn't make a second hamster;
   the one you have says hi (and comes back if it was hidden).
 
-TEST ON A MAC
+INSTALL ON MAC
   1. Unzip, open Terminal, and cd into the folder
      (type "cd " then drag the folder onto the Terminal window, press Enter).
   2. Run:   bash run_mac.sh
@@ -29,7 +29,6 @@ CONTROLS
                      Go to sleep / Wake up
                      How are you?     (food / joy / rest bars, days together)
                      Say something
-                     Party hat        (appears after 7 days together)
                      Names > rename the hamster / what it calls you
                      Read the note again
                      Hide for a while > 30 min / 1 hour / 2 hours
@@ -38,8 +37,7 @@ CONTROLS
                      Say goodbye (quit)
 
 HOW IT WORKS
-  - First launch: it says hi, reads your note (message.txt), then asks what to
-    call you.
+  - First launch: it says hi, then asks what to call you.
   - It talks every minute or so. What it says depends on its mood, the time of
     day, how chubby it is, and how long you've had it; some lines use your name.
     It grooms, stretches, and slumps when it's sad.
@@ -51,8 +49,7 @@ HOW IT WORKS
     rounder, in two stages. Walking around slowly slims it back down. Round
     hamsters waddle slower.
   - Days together: new lines unlock over time, and on milestone days
-    (day 2, 4, 8, 15, 31, 51, 101, ...) it celebrates. From one week on it wears
-    a party hat on those days, and you can put the hat on any time from the menu.
+    (day 2, 4, 8, 15, 31, 51, 101, ...) it celebrates. 
   - It hides itself while a fullscreen app is focused (video, game) and comes
     back after.
   - Stats are saved, and time passes while the app is closed (it never drops
