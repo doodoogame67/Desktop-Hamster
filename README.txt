@@ -3,10 +3,6 @@ DESKTOP HAMSTER
 A small low-poly hamster that roams around your whole screen. Feed it,
 pet it, let it nap.
 
-BEFORE YOU SEND IT
-  Edit message.txt. The hamster says it, one line per speech bubble, the first
-  time it opens.
-
 INSTALL ON UBUNTU
   1. Put this folder anywhere (e.g. Downloads).
   2. Open a terminal in the folder and run:   bash install.sh
