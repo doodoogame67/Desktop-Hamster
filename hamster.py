@@ -64,7 +64,7 @@ OLD_STATE_FILE = os.path.join(os.path.expanduser("~"), ".local", "share", APP_ID
 VERSION_FILE = os.path.join(HERE, "version.json")
 
 # Where updates come from: "owner/repo" on GitHub (a public repo). Empty = updates off.
-UPDATE_REPO = ""
+UPDATE_REPO = "doodoogame67/Desktop-Hamster"
 UPDATE_BRANCH = "main"
 UPDATE_EVERY = 20 * 3600        # seconds between automatic checks
 UPDATE_KEEP = {"message.txt"}   # files an update never overwrites
