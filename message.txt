@@ -1,0 +1,6 @@
+# The hamster says this note the first time it opens, one line per speech bubble.
+# Edit it to say whatever you want before you send it. Lines starting with # are ignored.
+hi! Jaxon made me just for you
+i'm going to live on your desktop now
+feed me, pet me, and don't shake the mouse at me
+take good care of me, okay?
