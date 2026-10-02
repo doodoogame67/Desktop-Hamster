@@ -20,6 +20,9 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sprites")
 # sprite canvas (logical px) - must match hamster.py
 W, SPRITE_H = 160, 116
 ANCHOR = (W / 2, 102)
+# tall canvas = the whole hamster window: standing up, on the wheel, in the nest, and the items
+BIG_W, BIG_H = 220, 180
+BIG_ANCHOR = (BIG_W / 2, 166)
 FOOD_SIZE = 34
 DPR = 2          # sprites are saved at 2x for sharp HiDPI/Retina display
 SSAA = 3         # supersampling for smooth edges
@@ -50,6 +53,11 @@ CARROT = rgb("#DB7A2C")
 HAT1 = rgb("#2F7F8C")
 HAT2 = rgb("#E0B33C")
 POM = rgb("#F3EBDD")
+WOOD = rgb("#B98A55")
+WOOD_D = rgb("#7A5632")
+STAND = rgb("#5C4630")
+STRAW = rgb("#D9B978")
+STRAW_D = rgb("#A8823F")
 
 KEY_DIR = np.array([0.55, 0.72, 0.55]); KEY_DIR /= np.linalg.norm(KEY_DIR)
 KEY_COL = np.array([1.00, 0.91, 0.76]) * 1.08
@@ -57,7 +65,7 @@ SKY_COL = np.array([0.40, 0.56, 0.78])
 BOUNCE_COL = np.array([0.34, 0.27, 0.20])
 
 MATS = ["fur", "muzzle", "pink", "earin", "eye", "lid", "nose",
-        "rasp", "leaf", "cap", "stem", "carrot", "hat", "pom"]
+        "rasp", "leaf", "cap", "stem", "carrot", "hat", "pom", "wood", "wood2", "stand", "straw"]
 MID = {m: i + 1 for i, m in enumerate(MATS)}
 
 
@@ -156,6 +164,19 @@ class Cone(Part):
         return world[T], rest[T], self.c + self.R @ np.array([0, self.h / 4, 0])
 
 
+class Box(Part):
+    """Rectangular block. `r` holds the half-sizes along its own x, y, z."""
+
+    _T = np.array([q for a, b, c, d in ((0, 1, 3, 2), (4, 5, 7, 6), (0, 1, 5, 4), (2, 3, 7, 6),
+                                        (0, 2, 6, 4), (1, 3, 7, 5)) for q in ((a, b, c), (a, c, d))])
+
+    def triangles(self):
+        V = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float) * self.r
+        world = V @ self.R.T + self.c
+        rest = V + self.rest
+        return world[self._T], rest[self._T], self.c
+
+
 def pose(parts, pivot, R, dy=0.0):
     pivot = np.array(pivot, float)
     for p in parts:
@@ -175,7 +196,9 @@ def party_hat(base, R):
 def hamster(pose_name, frame=0, held=None, hat=False, chub=0):
     """Build the hamster's parts. chub: 0 normal, 1 chubby, 2 very round."""
     k = chub
-    closed = pose_name in ("blink", "happy", "groom", "stretch", "sleep")
+    closed = pose_name in ("blink", "happy", "groom", "stretch", "sleep", "roll", "rollside")
+    sploot = pose_name == "sploot"
+    on_back = pose_name in ("roll", "rollside")
 
     # ---- sleeping: curled up loaf
     if pose_name == "sleep":
@@ -202,15 +225,17 @@ def hamster(pose_name, frame=0, held=None, hat=False, chub=0):
     rx, ry, rz = 1.25 * (1 + 0.07 * k), 0.84 * (1 + 0.12 * k), 0.98 * (1 + 0.17 * k)
     if stretch:
         rx, ry = rx * 1.14, ry * 0.86
+    if sploot:                           # pancake: flat on its belly, legs out
+        rx, ry, rz = rx * 1.10, ry * 0.72, rz * 1.08
     up = ry - 0.84                       # head rides higher on a rounder body
-    fwd = (rx - 1.25) * 0.6 + (0.22 if stretch else 0)
+    fwd = (rx - 1.25) * 0.6 + (0.22 if stretch else 0) + (0.2 if sploot else 0)
     body = [Part((-0.15 - 0.03 * k, 0.02 + ry, 0), (rx, ry, rz), "fur", egg=0.14),
             Part((-1.55 - (rx - 1.25) * 0.9, 0.85 + up * 0.6, 0), (0.14, 0.12, 0.12), "pink")]
 
     eat = pose_name == "eat"
     cheek = np.array((0.60, 0.52, 0.56) if eat else (0.50, 0.42, 0.42)) * (1 + 0.12 * k)
     cz = (0.48 if eat else 0.38) + 0.06 * k
-    hx, hy = 1.02 + fwd, 1.30 + up
+    hx, hy = 1.02 + fwd, 1.30 + up - (0.30 if sploot else 0)
     head = [
         Part((hx, hy, 0), (0.74, 0.70, 0.72), "fur"),
         Part((hx + 0.26, hy - 0.30, cz), cheek, "fur"),
@@ -232,7 +257,10 @@ def hamster(pose_name, frame=0, held=None, hat=False, chub=0):
             er = {"dangle": 0.19, "alert": 0.20, "sad": 0.13}.get(pose_name, 0.16)
             ey = hy + (0.08 if pose_name == "sad" else 0.14)
             head.append(Part((hx + 0.48, ey, z * 0.95), (er * 0.9, er, er * 0.8), "eye"))
-    if hat:
+    hat_parts = []
+    if hat and pose_name == "roll":      # it fell off; it sits on the ground beside the hamster
+        hat_parts = party_hat((-0.9, 0.0, 1.25), rot_z(14))
+    elif hat:
         head += party_hat((hx - 0.04, hy + 0.63, 0), rot_z(-12))
 
     if pose_name == "sad":
@@ -244,14 +272,19 @@ def hamster(pose_name, frame=0, held=None, hat=False, chub=0):
 
     fz = 1 + 0.12 * k
     feet = []
-    if pose_name == "dangle":
-        for z in (0.42, -0.42):
-            feet.append(Part((1.00, 0.02, z * fz), (0.12, 0.28, 0.12), "pink"))
-        for z in (0.58, -0.58):
-            feet.append(Part((-0.70, 0.00, z * 0.85 * fz), (0.15, 0.32, 0.15), "pink"))
+    if pose_name == "dangle" or on_back:
+        wig = (0.14 if frame else -0.14) if pose_name == "roll" else 0.0
+        for sgn, z in ((1, 0.42), (-1, -0.42)):
+            feet.append(Part((1.00 + wig * sgn, 0.02, z * fz), (0.12, 0.28, 0.12), "pink"))
+        for sgn, z in ((1, 0.58), (-1, -0.58)):
+            feet.append(Part((-0.70 - wig * sgn, 0.00, z * 0.85 * fz), (0.15, 0.32, 0.15), "pink"))
+    elif sploot:
+        for z in (0.50, -0.50):
+            feet.append(Part((hx + 0.72, 0.09, z * fz), (0.30, 0.09, 0.13), "pink"))
+            feet.append(Part((-0.15 - rx - 0.12, 0.09, z * fz), (0.36, 0.09, 0.16), "pink"))
     else:
         ph = frame * math.pi / 2 if pose_name == "walk" else None
-        sit = pose_name in ("eat", "groom")
+        sit = pose_name in ("eat", "groom", "stand")
         for side, z in ((1, 0.42), (-1, -0.42)):
             dx = dy = 0.0
             if ph is not None:
@@ -271,6 +304,25 @@ def hamster(pose_name, frame=0, held=None, hat=False, chub=0):
             feet.append(Part((-0.72 + dx, 0.14 + dy, z * 0.8 * fz), (0.30, 0.13, 0.17), "pink"))
 
     upper = body + head
+    if on_back:
+        everything = upper + feet
+        pivot = (0, 0.02 + ry, 0)
+        if pose_name == "rollside":      # halfway: lying on its side, belly toward the viewer
+            pose(everything, pivot, rot_x(-90), dy=rz - ry)
+        else:                            # on its back, belly up, paws in the air
+            pose(everything, pivot, rot_x(180))
+            lift = 0.74 - head[0].c[1]   # the head rests on the ground instead of sinking into it
+            for q in head:
+                q.c[1] += max(0.0, lift)
+        return everything + hat_parts
+    if pose_name == "stand":             # up on its hind legs, paws at its chest, sniffing
+        paws = [Part((hx + 0.50, hy - 0.72, z), (0.12, 0.16, 0.11), "pink") for z in (0.22, -0.22)]
+        pose(upper + paws, (-0.9, 0.1, 0), rot_z(48))
+        pose(head, head[0].c.copy(), rot_z(-30 + (7 if frame else -3)))
+        everything = upper + feet + paws
+        for q in everything:
+            q.c[0] += 0.55               # keep it over its shadow
+        return everything
     if pose_name == "walk":
         for p in upper:
             p.c[1] += 0.05 * abs(math.sin(frame * math.pi / 2))
@@ -289,6 +341,89 @@ def hamster(pose_name, frame=0, held=None, hat=False, chub=0):
         pose(upper + paws + extra, (-0.9, 0.1, 0), rot_z(ang))
         return upper + feet + paws + extra
     return upper + feet
+
+
+# --------------------------------------------------------------------------- items
+WHEEL_C = (0.2, 2.42)      # axle position (x, y); the hamster runs in the x-y plane
+WHEEL_R = 2.0
+WHEEL_HALF_W = 1.14
+SLATS = 16
+WHEEL_FLOOR = WHEEL_C[1] - WHEEL_R + 0.07     # height of the running surface at the bottom
+
+
+def wheel(frame=0):
+    """An open wooden wheel: rungs between two side rings, on a back stand.
+
+    Rungs with gaps keep the hamster visible. 4 frames = one rung spacing.
+    """
+    cx, cy = WHEEL_C
+    seg = 2 * math.pi / SLATS
+    phase = -frame * seg / 4                  # the bottom moves backwards under the feet
+    parts = []
+    for i in range(SLATS):
+        a = i * seg + phase
+        mid = (cx + WHEEL_R * math.sin(a), cy - WHEEL_R * math.cos(a))
+        R = rot_z(math.degrees(a))
+        q = Box((*mid, 0), (0.13, 0.07, WHEEL_HALF_W), "wood", R=R)             # rung
+        q.rest = np.array((i * 3.0, 10.0, 0.0))
+        parts.append(q)
+        for z in (WHEEL_HALF_W, -WHEEL_HALF_W):                                  # side rings
+            a2 = a + seg / 2
+            q = Box((cx + WHEEL_R * math.sin(a2), cy - WHEEL_R * math.cos(a2), z),
+                    (WHEEL_R * math.tan(seg / 2) * 1.04, 0.10, 0.07), "wood2", R=rot_z(math.degrees(a2)))
+            q.rest = np.array((i * 3.0, 30.0 + z, 0.0))
+            parts.append(q)
+    zb = -WHEEL_HALF_W - 0.09
+    for j in range(3):                        # spokes on the back
+        q = Box((cx, cy, zb), (WHEEL_R, 0.10, 0.05), "wood2", R=rot_z(math.degrees(phase * 4) + j * 60))
+        q.rest = np.array((j * 5.0, 20.0, 0.0))
+        parts.append(q)
+    parts.append(Part((cx, cy, zb + 0.02), (0.26, 0.26, 0.16), "stand"))
+    parts.append(Box((cx, cy / 2, zb - 0.14), (0.13, cy / 2, 0.06), "stand"))            # post
+    parts.append(Box((cx, 0.07, zb - 0.14), (1.45, 0.07, 0.13), "stand"))                # base
+    parts.append(Box((cx, 0.06, -0.1), (0.15, 0.06, WHEEL_HALF_W + 0.3), "stand"))       # foot
+    return parts
+
+
+def hamster_on_wheel(frame, hat, chub):
+    ham = hamster("walk", frame, hat=hat, chub=chub)
+    for q in ham:
+        q.c[1] += WHEEL_FLOOR
+    return wheel(frame) + ham
+
+
+NEST_C, NEST_RX, NEST_RZ, NEST_Z = 0.1, 2.3, 1.45, -0.3
+
+
+def nest():
+    """A ring of straw clumps around a straw floor."""
+    rng = np.random.default_rng(7)
+    parts = [Part((NEST_C, 0.10, NEST_Z), (NEST_RX - 0.2, 0.14, NEST_RZ - 0.15), "straw")]
+    n = 14
+    for i in range(n):
+        a = 2 * math.pi * i / n
+        q = Part((NEST_C + NEST_RX * math.cos(a), 0.30 + rng.uniform(-0.04, 0.08), NEST_Z + NEST_RZ * math.sin(a)),
+                 (0.66, 0.34 + rng.uniform(0, 0.08), 0.38), "straw",
+                 R=rot_y(-(math.degrees(a) + 90)) @ rot_z(rng.uniform(-12, 12)))
+        q.rest = rng.uniform(-40, 40, 3)
+        parts.append(q)
+    for i in range(9):                        # loose straws poking out
+        a = rng.uniform(0, 2 * math.pi)
+        q = Part((NEST_C + (NEST_RX + 0.15) * math.cos(a), 0.42 + rng.uniform(0, 0.15),
+                  NEST_Z + (NEST_RZ + 0.1) * math.sin(a)), (0.48, 0.045, 0.045), "straw",
+                 R=rot_y(rng.uniform(0, 360)) @ rot_z(rng.uniform(-35, 35)))
+        q.rest = rng.uniform(-40, 40, 3)
+        parts.append(q)
+    return parts
+
+
+def hamster_in_nest(frame, hat, chub):
+    ham = hamster("sleep", frame, hat=hat, chub=chub)
+    for q in ham:
+        q.c[1] += 0.16
+        q.c[0] += NEST_C
+        q.c[2] += NEST_Z
+    return nest() + ham
 
 
 def food(kind, scale=1.0, at=(0, 0, 0)):
@@ -347,7 +482,8 @@ def _albedo(mat, rest):
         col = mix(col, DARK, dark * 0.75)
         out[m] = col
     flat = {"muzzle": CREAM, "pink": PINK, "earin": EARIN, "eye": EYE, "lid": DARK,
-            "nose": NOSE, "leaf": LEAF, "stem": STEM, "carrot": CARROT}
+            "nose": NOSE, "leaf": LEAF, "stem": STEM, "carrot": CARROT,
+            "wood": WOOD, "wood2": WOOD_D, "stand": STAND}
     for name, col in flat.items():
         mm = mat == MID[name]
         out[mm] = col
@@ -355,6 +491,8 @@ def _albedo(mat, rest):
     out[mm] = mix(np.broadcast_to(RASP, (mm.sum(), 3)), RASP_D, (n1[mm] > 0.55).astype(float) * 0.8)
     mm = mat == MID["cap"]
     out[mm] = mix(np.broadcast_to(CAP, (mm.sum(), 3)), STEM, ((n1[mm] > 0.86) & (y[mm] > 0.75)).astype(float))
+    mm = mat == MID["straw"]
+    out[mm] = mix(np.broadcast_to(STRAW, (mm.sum(), 3)), STRAW_D, n1[mm] * 0.9)
     mm = mat == MID["hat"]
     stripe = (np.floor((y[mm] + 0.45 * x[mm]) / 0.14) % 2).astype(float)
     out[mm] = mix(np.broadcast_to(HAT1, (mm.sum(), 3)), HAT2, stripe)
@@ -461,7 +599,13 @@ POSES = ([(f"walk_{f}", "walk", f, None) for f in range(4)]
             ("dangle_0", "dangle", 0, None), ("sleep_0", "sleep", 0, None), ("sleep_1", "sleep", 1, None),
             ("groom_0", "groom", 0, None), ("groom_1", "groom", 1, None), ("sad_0", "sad", 0, None),
             ("stretch_0", "stretch", 0, None), ("alert_0", "alert", 0, None)]
+         + [("roll_0", "roll", 0, None), ("roll_1", "roll", 1, None), ("rollside_0", "rollside", 0, None),
+            ("sploot_0", "sploot", 0, None)]
          + [(f"eat_{k}_{f}", "eat", f, k) for k in FOODS for f in (0, 1)])
+# rendered on the tall canvas
+BIG_POSES = ([("stand_0", "stand", 0, None), ("stand_1", "stand", 1, None)]
+             + [(f"wheel_{f}", "wheel", f, None) for f in range(4)]
+             + [(f"nestsleep_{f}", "nest", f, None) for f in range(2)])
 
 
 def variant(chub, hat):
@@ -469,10 +613,17 @@ def variant(chub, hat):
 
 
 def _render_job(job):
-    name, pose_name, frame, held, chub, hat = job
-    parts = hamster(pose_name, frame, held, hat=hat, chub=chub)
-    for facing, suffix in ((1, "r"), (-1, "l")):
-        render(parts, facing, W, SPRITE_H, ANCHOR, PPU).save(
+    name, pose_name, frame, held, chub, hat, big = job
+    facings = ((1, "r"), (-1, "l"))
+    if pose_name == "wheel":         # on an item it always faces right, so the item never flips
+        parts, facings = hamster_on_wheel(frame, hat, chub), facings[:1]
+    elif pose_name == "nest":
+        parts, facings = hamster_in_nest(frame, hat, chub), facings[:1]
+    else:
+        parts = hamster(pose_name, frame, held, hat=hat, chub=chub)
+    size = (BIG_W, BIG_H, BIG_ANCHOR) if big else (W, SPRITE_H, ANCHOR)
+    for facing, suffix in facings:
+        render(parts, facing, *size, PPU).save(
             os.path.join(OUT, f"{name}_{variant(chub, hat)}_{suffix}.png"))
     return name
 
@@ -483,7 +634,8 @@ def main():
     for f in os.listdir(OUT):
         if f.endswith(".png"):
             os.remove(os.path.join(OUT, f))
-    jobs = [(n, p, f, h, c, hat) for (n, p, f, h) in POSES for c in (0, 1, 2) for hat in (False, True)]
+    jobs = [(n, p, f, h, c, hat, big) for big, poses in ((False, POSES), (True, BIG_POSES))
+            for (n, p, f, h) in poses for c in (0, 1, 2) for hat in (False, True)]
     with Pool() as pool:
         for i, _ in enumerate(pool.imap_unordered(_render_job, jobs), 1):
             if i % 20 == 0 or i == len(jobs):
@@ -491,6 +643,8 @@ def main():
     for k in FOODS:
         render(food(k), 1, FOOD_SIZE, FOOD_SIZE, (FOOD_SIZE / 2, FOOD_SIZE - 6), 26.0) \
             .save(os.path.join(OUT, f"food_{k}.png"))
+    render(wheel(0), 1, BIG_W, BIG_H, BIG_ANCHOR, PPU).save(os.path.join(OUT, "item_wheel.png"))
+    render(nest(), 1, BIG_W, BIG_H, BIG_ANCHOR, PPU).save(os.path.join(OUT, "item_nest.png"))
     print("done ->", OUT)
 
 

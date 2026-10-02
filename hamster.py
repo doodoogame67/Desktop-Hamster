@@ -138,6 +138,9 @@ LINES = [
     "if you need me i'll be over here",
     "do you ever just... sit",
     "*stretches*",
+    "*rolls over*",
+    "*flops*",
+    "*sniff sniff sniff*",
 ]
 YOU_LINES = [
     "hi {you}!",
@@ -192,7 +195,18 @@ MILESTONES = {
     365: ["one year, {you}. happy anniversary!", "thanks for keeping me around"],
 }
 HAT_UNLOCK_DAY = 7
-ACTION_LINES = {"*grooms whiskers*": "groom", "*scritch scritch*": "groom", "*stretches*": "stretch"}
+ACTION_LINES = {"*grooms whiskers*": "groom", "*scritch scritch*": "groom", "*stretches*": "stretch",
+                "*rolls over*": "roll", "*flops*": "sploot", "*sniff sniff sniff*": "stand"}
+ACTION_SECONDS = {"groom": 2.6, "stretch": 1.6, "roll": 4.0, "sploot": 5.0, "stand": 2.6}
+WHEEL_LINES = ["wheee!", "gotta go fast", "cardio time", "zoom zoom"]
+NEST_LINES = ["so cozy...", "my nest. my rules", "goodnight, {you}"]
+ROLL_LINES = ["tummy rubs?", "look at my belly", "*rolls over*"]
+TICKLE_LINES = ["hehe, that tickles!", "more tummy rubs!", "*happy wiggle*"]
+
+# things it owns. It uses them on its own; you can drag them anywhere.
+ITEMS = {"wheel": {"label": "Wheel", "shadow": 76}, "nest": {"label": "Nest", "shadow": 96}}
+WHEEL_CHUB_BURN = 3       # the wheel slims it this many times faster than walking
+NEST_REST = 2             # sleeping in the nest restores rest this many times faster
 
 
 def clamp(v, lo=0.0, hi=100.0):
@@ -273,12 +287,32 @@ class Sprites:
             self.frames[key] = self._load(f"{name}_{variant}_{'r' if facing > 0 else 'l'}.png")
         return self.frames[key]
 
+    @staticmethod
+    def origin(pm):
+        """Where a frame is drawn in the hamster window. Tall frames (standing, wheel, nest,
+        items) are the size of the whole window; the rest sit at the bottom."""
+        if pm.width() / pm.devicePixelRatio() > SPRITE_W + 1:
+            return 0, 0
+        return SX, H - SPRITE_H
+
+    @staticmethod
+    def _outline(pm):
+        dpr = pm.devicePixelRatio()
+        img = pm.toImage().scaled(int(pm.width() / dpr), int(pm.height() / dpr))
+        return QRegion(QBitmap.fromImage(img.createAlphaMask()))
+
     def shape(self, name, facing, variant):
         key = (name, facing, variant)
         if key not in self.shapes:
-            img = self.get(name, facing, variant).toImage().scaled(SPRITE_W, SPRITE_H)
-            self.shapes[key] = QRegion(QBitmap.fromImage(img.createAlphaMask()))
+            self.shapes[key] = self._outline(self.get(name, facing, variant))
         return self.shapes[key]
+
+    def item(self, kind):
+        key = ("item", kind)
+        if key not in self.frames:
+            self.frames[key] = self._load(f"item_{kind}.png")
+            self.shapes[key] = self._outline(self.frames[key])
+        return self.frames[key], self.shapes[key]
 
 
 # =========================================================================== pixel-art UI bits
@@ -364,6 +398,62 @@ class Food(QWidget):
         p.drawPixmap(0, 0, self.pix)
 
 
+def draw_shadow(p, cx, half_width):
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(0, 0, 0, 55))
+    p.drawEllipse(QPointF(cx, FEET - 1), half_width, 7)
+
+
+class Item(QWidget):
+    """A wheel or nest sitting on the desktop. Drag it to move it; right-click to put it away.
+    While the hamster is on it, this window hides and the hamster draws both."""
+
+    def __init__(self, owner, kind, gx, gy):
+        super().__init__()
+        _pet_window_flags(self)
+        self.owner = owner
+        self.kind = kind
+        self.pix, shape = owner.sprites.item(kind)
+        self.resize(W, H)
+        half = ITEMS[kind]["shadow"]
+        self.setMask(shape.united(QRegion(int(W / 2 - half), FEET - 8, half * 2, 14)))
+        self.drag_off = None
+        self.in_use = False
+        self.gx = self.gy = 0.0
+        self.place(gx, gy)
+        self.show()
+
+    def place(self, gx, gy):
+        g = self.owner.screen_rect
+        self.gx = clamp(gx, g.left() + 90, g.right() - 90)
+        self.gy = clamp(gy, g.top() + 170, g.bottom() - 12)
+        self.move(int(self.gx - W / 2), int(self.gy - FEET))
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        draw_shadow(p, W / 2, ITEMS[self.kind]["shadow"])
+        p.drawPixmap(0, 0, self.pix)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.drag_off = global_pos(e) - self.pos()
+
+    def mouseMoveEvent(self, e):
+        if self.drag_off is not None:
+            pos = global_pos(e) - self.drag_off
+            self.place(pos.x() + W / 2, pos.y() + FEET)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self.drag_off is not None:
+            self.drag_off = None
+            self.owner.save()
+
+    def contextMenuEvent(self, e):
+        m = QMenu()
+        m.addAction(f"Put the {self.kind} away", lambda: self.owner.remove_item(self.kind))
+        m.exec(e.globalPos())
+
+
 class Hamster(QWidget):
     def __init__(self, app, sprites):
         super().__init__()
@@ -393,6 +483,11 @@ class Hamster(QWidget):
         self.hat_on = False      # worn by choice (after it's unlocked)
         self.chub = 0.0
         self.chub_tier = 0
+        self.items = {}                # kind -> Item on the desktop
+        self.saved_items = None        # positions from the save; None = never had items yet
+        self.using = None              # the Item it is on right now
+        self.using_state = None
+        self.goal_item = None
         self.updated_from = None       # set when the app is newer than the save
         self.last_update_check = 0.0
         self.update_busy = False
@@ -451,6 +546,12 @@ class Hamster(QWidget):
             self.fs_timer.timeout.connect(self.check_fullscreen)
             self.fs_timer.start(1500)
 
+        if self.saved_items is None:   # first time: it gets both, along the bottom of the screen
+            self.saved_items = {"wheel": [geo.left() + geo.width() * 0.2, geo.bottom() - 30],
+                                "nest": [geo.left() + geo.width() * 0.8, geo.bottom() - 30]}
+        for kind, pos in self.saved_items.items():
+            if kind in ITEMS and isinstance(pos, list) and len(pos) == 2:
+                self.items[kind] = Item(self, kind, pos[0], pos[1])
         self.show()
         self.greet(first_run)
         self.check_milestone()
@@ -468,6 +569,8 @@ class Hamster(QWidget):
         if d.get("version", VERSION) < VERSION:
             self.updated_from = d.get("version")
         self.last_update_check = d.get("last_update_check", 0.0)
+        if isinstance(d.get("items"), dict):
+            self.saved_items = d["items"]
         self.name = d.get("name", self.name)
         self.chatty = d.get("chatty", True)
         self.owner = d.get("owner", "")
@@ -498,6 +601,7 @@ class Hamster(QWidget):
                        "first_seen": self.first_seen.isoformat(), "celebrated": self.celebrated,
                        "party_date": self.party_date, "hat_on": self.hat_on, "chub": self.chub,
                        "version": VERSION, "last_update_check": self.last_update_check,
+                       "items": {k: [it.gx, it.gy] for k, it in self.items.items()},
                        "saved_at": time.time()}, f)
         os.replace(tmp, STATE_FILE)
 
@@ -544,10 +648,69 @@ class Hamster(QWidget):
         return clamp(x, self.xmin, self.xmax), clamp(y, self.ymin, self.ymax)
 
     def set_state(self, s, ticks=0):
+        if self.using is not None and s != self.using_state:
+            self.leave_item()
         self.state = s
         self.state_t = ticks
         if s != "walk":
             self.run = 1.0
+
+    # ---- items
+    def add_item(self, kind):
+        if kind in self.items:
+            return
+        gx, gy = self.ground
+        side = -1 if gx > self.screen_rect.center().x() else 1
+        self.items[kind] = Item(self, kind, gx + side * 190, gy + 10)
+        self.raise_()
+        self.save()
+        self.say("ooh, for me?")
+
+    def remove_item(self, kind):
+        item = self.items.get(kind)
+        if item is None:
+            return
+        if self.using is item:
+            self.set_state("idle", FPS)
+        if self.goal_item == kind and self.state == "to_item":
+            self.set_state("idle", FPS)
+        del self.items[kind]
+        item.close()
+        item.deleteLater()
+        self.save()
+
+    def item_free(self, kind):
+        item = self.items.get(kind)
+        return item is not None and item.drag_off is None and not self.hidden
+
+    def go_to_item(self, kind):
+        self.goal_item = kind
+        self.set_state("to_item")
+
+    def enter_item(self, item, state, ticks=0):
+        """Step onto an item: its window hides and the hamster's window draws both."""
+        self.px, self.py = item.gx - W / 2, item.gy - FEET
+        self.facing = 1
+        self.using, self.using_state = item, state
+        item.in_use = True
+        item.hide()
+        self.set_state(state, ticks)
+
+    def leave_item(self):
+        item, self.using = self.using, None
+        item.in_use = False
+        if not self.hidden:
+            item.show()
+        # step out in front of it
+        self.px, self.py = self.clamp_pos(self.px, self.py + 16)
+        self.raise_()
+        self._mask_key = None
+
+    def go_sleep(self):
+        if self.item_free("nest"):
+            self.go_to_item("nest")
+        else:
+            self.set_state("sleep")
 
     def say(self, text, seconds=None):
         if seconds is None:
@@ -619,7 +782,7 @@ class Hamster(QWidget):
         line = self.pick_line()
         action = ACTION_LINES.get(line)
         if action and self.state == "idle":
-            self.set_state(action, int(FPS * (2.6 if action == "groom" else 1.6)))
+            self.set_state(action, int(FPS * ACTION_SECONDS[action]))
         self.say(self.fmt(line))
 
     def add_hearts(self, n=4):
@@ -648,7 +811,8 @@ class Hamster(QWidget):
             if time.time() >= self.hide_until:
                 self.unhide("i'm back!")
             return
-        own = {int(self.winId())} | {int(f.winId()) for f in self.foods}
+        own = ({int(self.winId())} | {int(f.winId()) for f in self.foods}
+               | {int(i.winId()) for i in self.items.values()})
         fs = fullscreen_app_active(own)
         if fs and self.hidden is None:
             self.hide_all("fullscreen")
@@ -664,6 +828,8 @@ class Hamster(QWidget):
         self.hide()
         for f in self.foods:
             f.hide()
+        for item in self.items.values():
+            item.hide()
 
     def _manual_hide_over(self):
         if self.hidden == "manual" and time.time() >= self.hide_until - 1:
@@ -675,6 +841,10 @@ class Hamster(QWidget):
         for f in self.foods:
             if not f.taken:
                 f.show()
+        for item in self.items.values():
+            if not item.in_use:
+                item.show()
+        self.raise_()
         if line:
             self.say(self.fmt(line))
 
@@ -692,9 +862,15 @@ class Hamster(QWidget):
         asleep = self.state == "sleep"
         self.hunger = clamp(self.hunger - DECAY_HUNGER * (0.5 if asleep else 1))
         self.happy = clamp(self.happy - (DECAY_HAPPY_HUNGRY if self.hunger < 25 else DECAY_HAPPY))
-        self.energy = clamp(self.energy + REGEN_ENERGY) if asleep else clamp(self.energy - DECAY_ENERGY)
-        if self.state in ("walk", "seek", "follow") and not self.hidden:
+        in_nest = asleep and self.using is not None
+        self.energy = (clamp(self.energy + REGEN_ENERGY * (NEST_REST if in_nest else 1)) if asleep
+                       else clamp(self.energy - DECAY_ENERGY))
+        if self.state in ("walk", "seek", "follow", "to_item") and not self.hidden:
             self.set_chub(self.chub - CHUB_BURN)
+        elif self.state == "wheel" and not self.hidden:
+            self.set_chub(self.chub - CHUB_BURN * WHEEL_CHUB_BURN)
+            self.happy = clamp(self.happy + 0.12)
+            self.energy = clamp(self.energy - 0.04)
         if self.frame % (FPS * 60) < FPS:   # about once a minute: did the date change?
             self.check_milestone()
             self.auto_update_check()
@@ -785,7 +961,7 @@ class Hamster(QWidget):
             return
         if self.energy < 20:
             self.say("so sleepy...")
-            self.set_state("sleep")
+            self.go_sleep()
             return
         if self.hunger < 30 and random.random() < 0.4 and not self.bubble:
             self.bubble = ("hungry", FPS * 3, None)
@@ -795,16 +971,25 @@ class Hamster(QWidget):
             if self.chatty and not self.bubble and random.random() < 0.5:
                 self.say(self.fmt(random.choice(FOLLOW_LINES)))
             return
+        # the wheel: more tempting the rounder it is
+        if (self.item_free("wheel") and self.energy > 35 and self.hunger > 20
+                and random.random() < (0.05, 0.12, 0.20)[self.chub_tier]):
+            self.go_to_item("wheel")
+            return
         r = random.random()
-        if r < 0.10:
-            self.set_state("groom", int(FPS * 2.6))
-        elif r < 0.15:
-            self.set_state("stretch", int(FPS * 1.6))
-        elif r < 0.28:
+        if r < 0.30:
+            action = ("groom" if r < 0.09 else "stretch" if r < 0.13 else "roll" if r < 0.18
+                      else "sploot" if r < 0.23 else "stand")
+            if action == "roll" and self.happy < 50:
+                action = "sploot"        # it only shows its belly when it's happy
+            self.set_state(action, int(FPS * ACTION_SECONDS[action]))
+            if action == "roll" and self.chatty and not self.bubble and random.random() < 0.6:
+                self.say(self.fmt(random.choice(ROLL_LINES)))
+        elif r < 0.42:
             # a big trip to anywhere on the screen
             self.target = (random.uniform(self.xmin, self.xmax), random.uniform(self.ymin, self.ymax))
             self.set_state("walk")
-        elif r < 0.65:
+        elif r < 0.72:
             ang = random.uniform(0, 2 * math.pi)
             dist = random.uniform(100, 480)
             self.target = self.clamp_pos(self.px + math.cos(ang) * dist,
@@ -844,7 +1029,7 @@ class Hamster(QWidget):
         near = self.cursor_dist() < 200
         # shaking the mouse right next to it: startled, then it scurries off
         if (len(self.swings) >= 4 and near and self.startle_cd == 0 and self.drag_off is None
-                and self.state in ("idle", "walk", "follow", "groom", "stretch")):
+                and self.state in ("idle", "walk", "follow", "groom", "stretch", "roll", "sploot", "stand")):
             self.swings.clear()
             self.startle_cd = FPS * 6
             self.set_state("startled", int(FPS * 0.7))
@@ -868,7 +1053,7 @@ class Hamster(QWidget):
         self.track_cursor()
 
         s = self.state
-        if s in ("idle", "groom", "stretch"):
+        if s in ("idle", "groom", "stretch", "roll", "sploot", "stand"):
             self.state_t -= 1
             if self.state_t <= 0 or any(f.landed and not f.taken for f in self.foods):
                 self.choose_next()
@@ -877,6 +1062,27 @@ class Hamster(QWidget):
                 self.set_state("idle", random.randint(FPS, FPS * 4))
             elif any(f.landed and not f.taken for f in self.foods):
                 self.choose_next()
+        elif s == "to_item":
+            item = self.items.get(self.goal_item)
+            if item is None or item.drag_off is not None or any(f.landed and not f.taken for f in self.foods):
+                self.set_state("idle", FPS // 2)
+            elif self.walk_toward(item.gx - W / 2, item.gy - FEET, speed * 1.2):
+                if item.kind == "wheel":
+                    self.enter_item(item, "wheel", random.randint(FPS * 6, FPS * 11))
+                    line = random.choice(WHEEL_LINES)
+                else:
+                    self.enter_item(item, "sleep")
+                    line = random.choice(NEST_LINES)
+                if self.chatty:
+                    self.say(self.fmt(line), 1.8)
+        elif s == "wheel":
+            self.state_t -= 1
+            if (self.state_t <= 0 or self.energy < 20
+                    or any(f.landed and not f.taken for f in self.foods)):
+                self.set_state("idle", FPS // 2)      # steps off
+                self.target = self.clamp_pos(self.px + random.choice((-1, 1)) * random.uniform(130, 220),
+                                             self.py + random.uniform(0, 30))
+                self.set_state("walk")
         elif s == "follow":
             self.state_t -= 1
             cx, cy = self.last_cursor
@@ -980,8 +1186,19 @@ class Hamster(QWidget):
     def current_sprite(self):
         """(sprite name, vertical offset in px)"""
         s, f = self.state, self.frame
-        if s in ("walk", "seek", "follow"):
+        if s in ("walk", "seek", "follow", "to_item"):
             return f"walk_{(f // (3 if self.run > 1 else 4)) % 4}", 0
+        if s == "wheel":
+            return f"wheel_{(f // 3) % 4}", 0
+        if s == "roll":       # tips onto its side, wiggles on its back, tips back up
+            total = int(FPS * ACTION_SECONDS["roll"])
+            if self.state_t > total - 8 or self.state_t < 8:
+                return "rollside_0", 0
+            return f"roll_{(f // 8) % 2}", 0
+        if s == "sploot":
+            return "sploot_0", 0
+        if s == "stand":
+            return f"stand_{(f // 10) % 2}", 0
         if s == "eat":
             return f"eat_{self.eating_kind}_{(f // 6) % 2}", 0
         if s == "groom":
@@ -991,7 +1208,7 @@ class Hamster(QWidget):
         if s == "startled":
             return "alert_0", -abs(math.sin(self.state_t * 0.22)) * 10
         if s == "sleep":
-            return f"sleep_{(f // 40) % 2}", 0
+            return f"{'nestsleep' if self.using else 'sleep'}_{(f // 40) % 2}", 0
         if s == "dragged":
             return "dangle_0", 0
         if s == "land":
@@ -1028,8 +1245,12 @@ class Hamster(QWidget):
         if key == self._mask_key:
             return
         self._mask_key = key
-        region = self.sprites.shape(name, self.facing, self.variant).translated(SX, H - SPRITE_H + int(dy))
-        if self.state != "dragged":
+        ox, oy = Sprites.origin(self.sprites.get(name, self.facing, self.variant))
+        region = self.sprites.shape(name, self.facing, self.variant).translated(ox, oy + int(dy))
+        if self.using is not None:
+            half = ITEMS[self.using.kind]["shadow"]
+            region = region.united(QRegion(int(W / 2 - half), FEET - 8, half * 2, 14))
+        elif self.state != "dragged":
             region = region.united(QRegion(int(W / 2 - 48), FEET - 8, 96, 16))  # ground shadow
         if br is not None:
             region = region.united(QRegion(br.toRect().adjusted(-3, -3, 3, 10)))
@@ -1041,11 +1262,13 @@ class Hamster(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         name, dy = self.current_sprite()
-        if self.state != "dragged":
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(0, 0, 0, 55))
-            p.drawEllipse(QPointF(W / 2 + 4 * self.facing, FEET - 1), 42 + 5 * self.chub_tier, 6)
-        p.drawPixmap(QPointF(SX, H - SPRITE_H + dy), self.sprites.get(name, self.facing, self.variant))
+        pm = self.sprites.get(name, self.facing, self.variant)
+        if self.using is not None:
+            draw_shadow(p, W / 2, ITEMS[self.using.kind]["shadow"])
+        elif self.state != "dragged":
+            draw_shadow(p, W / 2 + 4 * self.facing, 42 + 5 * self.chub_tier)
+        ox, oy = Sprites.origin(pm)
+        p.drawPixmap(QPointF(ox, oy + dy), pm)
 
         for x, y, a in self.hearts:
             draw_heart(p, x, y, 2, a)
@@ -1138,8 +1361,16 @@ class Hamster(QWidget):
             return
         if self.state in ("eat", "land", "dragged"):
             return
+        if self.state == "roll":          # tummy rub: it stays on its back a bit longer
+            self.happy = clamp(self.happy + 10)
+            self.add_hearts(6)
+            self.state_t = max(self.state_t, int(FPS * 2))
+            self.say(self.fmt(random.choice(TICKLE_LINES)), 1.6)
+            return
         self.happy = clamp(self.happy + 6)
         self.add_hearts()
+        if self.state == "wheel":         # it keeps running
+            return
         self.set_state("happy", int(FPS * 1.2))
 
     def contextMenuEvent(self, e):
@@ -1151,7 +1382,7 @@ class Hamster(QWidget):
         if self.state == "sleep":
             m.addAction("Wake up", self.wake)
         else:
-            m.addAction("Go to sleep", lambda: self.set_state("sleep"))
+            m.addAction("Go to sleep", self.go_sleep)
         m.addAction("How are you?", lambda: setattr(self, "bubble", ("stats", FPS * 5, None)))
         m.addAction("Say something", self.chatter)
         if self.hat_unlocked:
@@ -1160,6 +1391,13 @@ class Hamster(QWidget):
             hat.setChecked(self.wearing_hat)
             hat.toggled.connect(self.set_hat)
             m.addAction(hat)
+        things = m.addMenu("Items")
+        for kind, info in ITEMS.items():
+            act = QAction(info["label"], things)
+            act.setCheckable(True)
+            act.setChecked(kind in self.items)
+            act.toggled.connect(lambda on, k=kind: self.add_item(k) if on else self.remove_item(k))
+            things.addAction(act)
         m.addSeparator()
         names = m.addMenu("Names")
         names.addAction(f"Rename {self.name}...", self.rename)
@@ -1219,8 +1457,8 @@ class Hamster(QWidget):
 
     def quit(self):
         self.save()
-        for f in self.foods:
-            f.close()
+        for w in list(self.foods) + list(self.items.values()):
+            w.close()
         self.app.quit()
 
 
@@ -1328,6 +1566,29 @@ def selftest(app):
         if i % 30 == 0:
             h.stat_tick()
             h.grab()
+    for action in ACTION_SECONDS:                 # every idle animation, every frame of it
+        h.set_state(action, int(FPS * ACTION_SECONDS[action]))
+        while h.state == action:
+            h.tick()
+            h.grab()
+    for kind, state in (("wheel", "wheel"), ("nest", "sleep")):   # walk to each item and use it
+        h.energy = 90
+        h.go_to_item(kind)
+        for i in range(3000):
+            h.tick()
+            if i % 15 == 0:
+                h.grab()
+            if h.state == state and h.using is not None:
+                break
+        else:
+            raise RuntimeError(f"never reached the {kind}")
+        for i in range(120):
+            h.tick()
+            h.stat_tick()
+            h.grab()
+        h.set_state("idle", FPS)
+        if h.using is not None or not h.items[kind].isVisible():
+            raise RuntimeError(f"did not leave the {kind} cleanly")
     print("selftest ok")
 
 

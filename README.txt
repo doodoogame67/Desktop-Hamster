@@ -23,12 +23,14 @@ CONTROLS
   Click and drag   pick it up and set it down anywhere
   Mouse nearby     it looks at the cursor and sometimes follows it
   Shake the mouse  right next to it: it gets startled and scurries away
+  Drag an item     move the wheel or nest anywhere; right-click it to put it away
   Right-click      menu:
                      Feed > raspberries / mushroom / carrot
                      Pet
                      Go to sleep / Wake up
                      How are you?     (food / joy / rest bars, days together)
                      Say something
+                     Items > Wheel / Nest   (take out or put away)
                      Names > rename the hamster / what it calls you
                      Read the note again
                      Hide for a while > 30 min / 1 hour / 2 hours
@@ -41,6 +43,14 @@ HOW IT WORKS
   - It talks every minute or so. What it says depends on its mood, the time of
     day, how chubby it is, and how long you've had it; some lines use your name.
     It grooms, stretches, and slumps when it's sad.
+  - Animations it does on its own: grooming, stretching, rolling onto its back
+    (pet it then for a tummy rub: +10 joy), flopping flat, and standing up to
+    sniff. It only rolls over when its joy is 50 or more.
+  - Wheel: it walks over and runs for 6-11 s, more often the chubbier it is.
+    Running slims it 3x faster than walking and adds joy.
+  - Nest: when it gets sleepy (or you pick Go to sleep) it walks to the nest
+    and sleeps there, which restores rest 2x faster. With the nest put away it
+    sleeps where it stands.
   - Food drops near it; it walks over and eats with its cheeks stuffed.
   - Hunger drains over ~2 hours. When hungry it shows a raspberry bubble and
     walks slower, and its joy drops faster. Low joy = sad posture.
