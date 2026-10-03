@@ -22,12 +22,14 @@ CONTROLS
   Click            pet it (hearts, +joy)
   Click and drag   pick it up and set it down anywhere
   Mouse nearby     it looks at the cursor and sometimes follows it
-  Shake the mouse  right next to it: it gets startled and scurries away
+  Mouse over it    run the cursor back and forth across it to pet it (about +1 joy
+                   per pass; on its back it's a tummy rub)
   Drag an item     move the wheel or nest anywhere; right-click it to put it away
   Right-click      menu:
                      Feed > raspberries / mushroom / carrot
                      Pet
                      Go to sleep / Wake up
+                     Run on the wheel / Stop running
                      How are you?     (food / joy / rest bars, days together)
                      Say something
                      Items > Wheel / Nest   (take out or put away)

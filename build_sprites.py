@@ -53,6 +53,7 @@ CARROT = rgb("#DB7A2C")
 HAT1 = rgb("#2F7F8C")
 HAT2 = rgb("#E0B33C")
 POM = rgb("#F3EBDD")
+LASH = rgb("#2A1A12")
 WOOD = rgb("#B98A55")
 WOOD_D = rgb("#7A5632")
 STAND = rgb("#5C4630")
@@ -65,7 +66,7 @@ SKY_COL = np.array([0.40, 0.56, 0.78])
 BOUNCE_COL = np.array([0.34, 0.27, 0.20])
 
 MATS = ["fur", "muzzle", "pink", "earin", "eye", "lid", "nose",
-        "rasp", "leaf", "cap", "stem", "carrot", "hat", "pom", "wood", "wood2", "stand", "straw"]
+        "rasp", "leaf", "cap", "stem", "carrot", "hat", "pom", "wood", "wood2", "stand", "straw", "lash"]
 MID = {m: i + 1 for i, m in enumerate(MATS)}
 
 
@@ -186,6 +187,19 @@ def pose(parts, pivot, R, dy=0.0):
 
 
 # --------------------------------------------------------------------------- the hamster
+def closed_eye(head_c, head_r, direction, smile):
+    """A shut eye drawn as two short dark strokes on the head's surface.
+
+    smile=True gives a happy arc (^); False gives a sleepy one (the lids' lower edge).
+    """
+    d = np.array(direction, float)
+    pos = np.array(head_c, float) + d * (1.03 / np.linalg.norm(d / np.array(head_r, float)))
+    tilt = -30 if smile else 30
+    drop = 0.03 if smile else -0.03
+    return [Part(pos + np.array((sx * 0.085, drop, 0.0)), (0.115, 0.036, 0.09), "lash", R=rot_z(sx * tilt))
+            for sx in (1, -1)]
+
+
 def party_hat(base, R):
     base = np.array(base, float)
     h = 0.70
@@ -215,7 +229,7 @@ def hamster(pose_name, frame=0, held=None, hat=False, chub=0):
         for z in (0.44, -0.44):
             head += [Part((0.72, 1.30 + up, z), (0.11, 0.20, 0.21), "fur", R=rot_z(40)),
                      Part((0.78, 1.28 + up, z), (0.05, 0.15, 0.15), "earin", R=rot_z(40)),
-                     Part((1.40, 0.92 + up, z * 0.97), (0.13, 0.025, 0.08), "lid")]
+                     *closed_eye((1.02, 0.78 + up, 0), (0.70, 0.62, 0.70), (0.44, 0.15, z * 1.1), False)]
         if hat:
             head += party_hat((0.92, 1.33 + up, 0), rot_z(38))
         return body + head + [Part((-1.52 - 0.1 * k, 0.55 + up, 0), (0.13, 0.11, 0.11), "pink")]
@@ -252,7 +266,8 @@ def hamster(pose_name, frame=0, held=None, hat=False, chub=0):
             head += [Part((hx - 0.20, hy + 0.62 + 0.06 * (tall - 1), z), (0.11, 0.25 * tall, 0.23), "fur", R=rot_z(10)),
                      Part((hx - 0.14, hy + 0.61 + 0.06 * (tall - 1), z), (0.05, 0.19 * tall, 0.17), "earin", R=rot_z(10))]
         if closed:
-            head.append(Part((hx + 0.50, hy + 0.12, z * 0.95), (0.13, 0.025, 0.08), "lid"))
+            head += closed_eye((hx, hy, 0), (0.74, 0.70, 0.72), (0.50, 0.14, z),
+                               smile=pose_name != "blink")
         else:
             er = {"dangle": 0.19, "alert": 0.20, "sad": 0.13}.get(pose_name, 0.16)
             ey = hy + (0.08 if pose_name == "sad" else 0.14)
@@ -483,7 +498,7 @@ def _albedo(mat, rest):
         out[m] = col
     flat = {"muzzle": CREAM, "pink": PINK, "earin": EARIN, "eye": EYE, "lid": DARK,
             "nose": NOSE, "leaf": LEAF, "stem": STEM, "carrot": CARROT,
-            "wood": WOOD, "wood2": WOOD_D, "stand": STAND}
+            "wood": WOOD, "wood2": WOOD_D, "stand": STAND, "lash": LASH}
     for name, col in flat.items():
         mm = mat == MID[name]
         out[mm] = col
@@ -598,7 +613,7 @@ POSES = ([(f"walk_{f}", "walk", f, None) for f in range(4)]
          + [("idle_0", "idle", 0, None), ("idle_1", "blink", 0, None), ("happy_0", "happy", 0, None),
             ("dangle_0", "dangle", 0, None), ("sleep_0", "sleep", 0, None), ("sleep_1", "sleep", 1, None),
             ("groom_0", "groom", 0, None), ("groom_1", "groom", 1, None), ("sad_0", "sad", 0, None),
-            ("stretch_0", "stretch", 0, None), ("alert_0", "alert", 0, None)]
+            ("stretch_0", "stretch", 0, None)]
          + [("roll_0", "roll", 0, None), ("roll_1", "roll", 1, None), ("rollside_0", "rollside", 0, None),
             ("sploot_0", "sploot", 0, None)]
          + [(f"eat_{k}_{f}", "eat", f, k) for k in FOODS for f in (0, 1)])

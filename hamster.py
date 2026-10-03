@@ -4,7 +4,7 @@ Desktop Hamster: a small low-poly hamster that roams around your screen.
 
   Left-click        pet it
   Left-drag         pick it up and put it down somewhere else
-  Shake the mouse   startles it
+  Mouse over it     pets it: run the cursor back and forth across it
   Right-click       menu (feed, sleep, stats, party hat, names, hide, quiet mode, quit)
 
 Runs on Linux (PyQt5 or PyQt6) and macOS (PyQt6).
@@ -167,7 +167,9 @@ CHUB_LINES = ["i'm not chubby, i'm fluffy", "maybe one less berry today", "*wadd
               "my cheeks have cheeks", "i should go for a walk"]
 VERY_CHUB_LINES = ["i am extremely round now", "i'm built like a dumpling", "*rolls a little*"]
 FOLLOW_LINES = ["ooh, what's that?", "wait for me!", "whatcha got?", "i'm coming!"]
-STARTLE_LINES = ["eek!", "whoa!", "!!", "don't scare me like that", "yikes"]
+STROKE_LINES = ["that feels nice", "*happy squeak*", "more pets please", "right there, {you}", "mmm"]
+STROKE_PX = 40            # cursor travel over the hamster that counts as one stroke
+STROKE_JOY = 0.5          # joy per stroke (a click is worth 6)
 POKE_LINES = ["i'm right here, {you}!", "hi hi hi!", "you called?", "still here!"]
 # unlocked the longer you keep it: (days together needed, line)
 TIMED_LINES = [
@@ -206,6 +208,8 @@ TICKLE_LINES = ["hehe, that tickles!", "more tummy rubs!", "*happy wiggle*"]
 # things it owns. It uses them on its own; you can drag them anywhere.
 ITEMS = {"wheel": {"label": "Wheel", "shadow": 76}, "nest": {"label": "Nest", "shadow": 96}}
 WHEEL_CHUB_BURN = 3       # the wheel slims it this many times faster than walking
+FORCED_RUN = FPS * 20     # how long it runs when sent to the wheel from the menu
+FORCED_NAP = FPS * 60 * 5 # shortest nap when sent to sleep from the menu
 NEST_REST = 2             # sleeping in the nest restores rest this many times faster
 
 
@@ -461,6 +465,7 @@ class Hamster(QWidget):
         self.sprites = sprites
         _pet_window_flags(self)
         self.resize(W, H)
+        self.setMouseTracking(True)      # so hovering counts as petting
 
         geo = app.primaryScreen().availableGeometry()
         self.screen_rect = geo
@@ -488,6 +493,8 @@ class Hamster(QWidget):
         self.using = None              # the Item it is on right now
         self.using_state = None
         self.goal_item = None
+        self.told_to_run = False       # sent to the wheel from the menu
+        self.nap_until = 0             # frame until which a nap from the menu lasts
         self.updated_from = None       # set when the app is newer than the save
         self.last_update_check = 0.0
         self.update_busy = False
@@ -523,8 +530,9 @@ class Hamster(QWidget):
         # mouse tracking
         self.last_cursor = None
         self.cursor_seen = -10 ** 6      # frame when the cursor last moved
-        self.swings = collections.deque()  # (frame, direction) of fast horizontal mouse moves
-        self.startle_cd = 0
+        self.hover_at = None             # last cursor spot while it was over the hamster
+        self.stroke_px = 0.0             # cursor travel over it since the last stroke
+        self.stroke_line_cd = 0
         # hiding
         self.hidden = None       # None, "fullscreen" or "manual"
         self.hide_until = 0.0
@@ -654,6 +662,10 @@ class Hamster(QWidget):
         self.state_t = ticks
         if s != "walk":
             self.run = 1.0
+        if s not in ("to_item", "wheel"):
+            self.told_to_run = False
+        if s not in ("to_item", "sleep"):
+            self.nap_until = 0
 
     # ---- items
     def add_item(self, kind):
@@ -706,11 +718,27 @@ class Hamster(QWidget):
         self.raise_()
         self._mask_key = None
 
-    def go_sleep(self):
+    def go_sleep(self, told=False):
+        """told = picked from the menu: it naps for at least FORCED_NAP even if it isn't tired."""
+        if told:
+            self.nap_until = self.frame + FORCED_NAP
+            if self.chatty:
+                self.say("okay... bedtime", 1.6)
         if self.item_free("nest"):
             self.go_to_item("nest")
         else:
             self.set_state("sleep")
+
+    def run_on_wheel(self):
+        """Picked from the menu: it goes and runs even if it's tired or the wheel was put away."""
+        if self.hidden:
+            return
+        if "wheel" not in self.items:
+            self.add_item("wheel")
+        if self.chatty:
+            self.say("on it!", 1.4)
+        self.go_to_item("wheel")
+        self.told_to_run = True
 
     def say(self, text, seconds=None):
         if seconds is None:
@@ -1014,28 +1042,10 @@ class Hamster(QWidget):
         cur = QCursor.pos()
         c = (cur.x(), cur.y())
         if self.last_cursor is not None and c != self.last_cursor:
-            dx = c[0] - self.last_cursor[0]
             self.cursor_seen = self.frame
-            if abs(dx) > 14:
-                direction = 1 if dx > 0 else -1
-                if not self.swings or self.swings[-1][1] != direction:
-                    self.swings.append((self.frame, direction))
         self.last_cursor = c
-        while self.swings and self.frame - self.swings[0][0] > FPS * 0.8:
-            self.swings.popleft()
-        if self.startle_cd > 0:
-            self.startle_cd -= 1
-
-        near = self.cursor_dist() < 200
-        # shaking the mouse right next to it: startled, then it scurries off
-        if (len(self.swings) >= 4 and near and self.startle_cd == 0 and self.drag_off is None
-                and self.state in ("idle", "walk", "follow", "groom", "stretch", "roll", "sploot", "stand")):
-            self.swings.clear()
-            self.startle_cd = FPS * 6
-            self.set_state("startled", int(FPS * 0.7))
-            self.facing = 1 if self.last_cursor[0] > self.px + W / 2 else -1
-            self.say(self.fmt(random.choice(STARTLE_LINES)), 1.4)
-            return
+        if self.stroke_line_cd > 0:
+            self.stroke_line_cd -= 1
         # glance at the cursor when it moves nearby
         if self.state == "idle" and self.cursor_fresh() and self.cursor_dist() < 280:
             dx = self.last_cursor[0] - (self.px + W / 2)
@@ -1064,11 +1074,14 @@ class Hamster(QWidget):
                 self.choose_next()
         elif s == "to_item":
             item = self.items.get(self.goal_item)
-            if item is None or item.drag_off is not None or any(f.landed and not f.taken for f in self.foods):
+            food_down = any(f.landed and not f.taken for f in self.foods) and not self.told_to_run
+            if item is None or item.drag_off is not None or food_down:
                 self.set_state("idle", FPS // 2)
             elif self.walk_toward(item.gx - W / 2, item.gy - FEET, speed * 1.2):
                 if item.kind == "wheel":
-                    self.enter_item(item, "wheel", random.randint(FPS * 6, FPS * 11))
+                    told = self.told_to_run
+                    self.enter_item(item, "wheel", FORCED_RUN if told else random.randint(FPS * 6, FPS * 11))
+                    self.told_to_run = told
                     line = random.choice(WHEEL_LINES)
                 else:
                     self.enter_item(item, "sleep")
@@ -1077,8 +1090,8 @@ class Hamster(QWidget):
                     self.say(self.fmt(line), 1.8)
         elif s == "wheel":
             self.state_t -= 1
-            if (self.state_t <= 0 or self.energy < 20
-                    or any(f.landed and not f.taken for f in self.foods)):
+            tired_or_food = self.energy < 20 or any(f.landed and not f.taken for f in self.foods)
+            if self.state_t <= 0 or (tired_or_food and not self.told_to_run):
                 self.set_state("idle", FPS // 2)      # steps off
                 self.target = self.clamp_pos(self.px + random.choice((-1, 1)) * random.uniform(130, 220),
                                              self.py + random.uniform(0, 30))
@@ -1091,17 +1104,11 @@ class Hamster(QWidget):
             if self.walk_toward(*goal, speed * 1.2) or self.state_t <= 0:
                 self.facing = side
                 self.set_state("idle", random.randint(FPS * 2, FPS * 4))
-        elif s == "startled":
+        elif s == "petted":      # being stroked: it holds still until the cursor leaves
             self.state_t -= 1
             if self.state_t <= 0:
-                # run a short way from the cursor
-                cx, cy = self.last_cursor
-                bx, by = self.px + W / 2, self.py + FEET - 35
-                ang = math.atan2(by - cy, bx - cx) + random.uniform(-0.5, 0.5)
-                dist = random.uniform(180, 280)
-                self.target = self.clamp_pos(self.px + math.cos(ang) * dist, self.py + math.sin(ang) * dist)
-                self.set_state("walk")
-                self.run = 2.2
+                self.hover_at = None
+                self.set_state("idle", FPS)
         elif s == "seek":
             f = self.target_food
             if f not in self.foods:
@@ -1135,7 +1142,7 @@ class Hamster(QWidget):
                 self.target_food = None
                 self.set_state("idle", FPS)
         elif s == "sleep":
-            if self.energy >= 100:
+            if self.energy >= 100 and self.frame >= self.nap_until:
                 self.say("*yawn*")
                 self.set_state("idle", FPS * 2)
             elif self.frame % (FPS * 4) == 0 and not self.bubble:
@@ -1205,8 +1212,8 @@ class Hamster(QWidget):
             return f"groom_{(f // 7) % 2}", 0
         if s == "stretch":
             return "stretch_0", 0
-        if s == "startled":
-            return "alert_0", -abs(math.sin(self.state_t * 0.22)) * 10
+        if s == "petted":
+            return "happy_0", -abs(math.sin(f * 0.25)) * 3
         if s == "sleep":
             return f"{'nestsleep' if self.using else 'sleep'}_{(f // 40) % 2}", 0
         if s == "dragged":
@@ -1331,6 +1338,8 @@ class Hamster(QWidget):
 
     def mouseMoveEvent(self, e):
         if self.drag_off is None:
+            if e.buttons() == Qt.MouseButton.NoButton:
+                self.hover(global_pos(e))
             return
         gp = global_pos(e)
         if self.state != "dragged" and (gp - self.press_pos).manhattanLength() > 5:
@@ -1348,12 +1357,48 @@ class Hamster(QWidget):
         if e.button() != Qt.MouseButton.LeftButton or self.drag_off is None:
             return
         self.drag_off = None
-        self.swings.clear()
+        self.hover_at = None
         if self.state == "dragged":
             self.lift = 14.0
             self.set_state("land")
         else:
             self.pet()
+
+    def leaveEvent(self, _):
+        self.hover_at = None
+
+    def hover(self, gp):
+        """The cursor moved while over the hamster. Enough travel = one stroke."""
+        here = (gp.x(), gp.y())
+        if gp.y() - self.y() < H - SPRITE_H - 4:     # over the speech bubble, not the hamster
+            self.hover_at = None
+            return
+        if self.hover_at is not None:
+            self.stroke_px += min(math.dist(here, self.hover_at), 60)
+        self.hover_at = here
+        while self.stroke_px >= STROKE_PX:
+            self.stroke_px -= STROKE_PX
+            self.stroke()
+
+    def stroke(self):
+        s = self.state
+        if s in ("sleep", "eat", "land", "dragged", "seek", "to_item"):
+            return                                   # asleep or busy: it doesn't notice
+        self.happy = clamp(self.happy + STROKE_JOY)
+        if len(self.hearts) < 6:
+            self.add_hearts(1)
+        if s == "roll":                              # tummy rub
+            self.happy = clamp(self.happy + STROKE_JOY)
+            self.state_t = max(self.state_t, int(FPS * 1.5))
+            lines = TICKLE_LINES
+        elif s == "wheel":                           # keeps running
+            lines = None
+        else:
+            self.set_state("petted", int(FPS * 0.7))
+            lines = STROKE_LINES
+        if lines and self.chatty and not self.bubble and self.stroke_line_cd == 0:
+            self.stroke_line_cd = FPS * 8
+            self.say(self.fmt(random.choice(lines)), 1.6)
 
     def pet(self):
         if self.state == "sleep":
@@ -1382,7 +1427,11 @@ class Hamster(QWidget):
         if self.state == "sleep":
             m.addAction("Wake up", self.wake)
         else:
-            m.addAction("Go to sleep", self.go_sleep)
+            m.addAction("Go to sleep", lambda: self.go_sleep(True))
+        if self.state == "wheel":
+            m.addAction("Stop running", lambda: self.set_state("idle", FPS))
+        else:
+            m.addAction("Run on the wheel", self.run_on_wheel)
         m.addAction("How are you?", lambda: setattr(self, "bubble", ("stats", FPS * 5, None)))
         m.addAction("Say something", self.chatter)
         if self.hat_unlocked:
@@ -1566,6 +1615,11 @@ def selftest(app):
         if i % 30 == 0:
             h.stat_tick()
             h.grab()
+    h.set_state("idle", FPS)
+    for i in range(12):                           # petting by running the cursor over it
+        h.stroke()
+        h.tick()
+        h.grab()
     for action in ACTION_SECONDS:                 # every idle animation, every frame of it
         h.set_state(action, int(FPS * ACTION_SECONDS[action]))
         while h.state == action:
